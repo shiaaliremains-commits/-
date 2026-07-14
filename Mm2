@@ -1,0 +1,277 @@
+local enabled = true
+local tweenSpeed = 25
+
+local Players = game:GetService("Players")
+local CollectionService = game:GetService("CollectionService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local localPlayer = Players.LocalPlayer
+local localRole = "Innocent"
+local gameActive = false 
+local safeRadius = 45 
+
+local remotes = ReplicatedStorage:WaitForChild("Remotes")
+local gameplayGameplay = remotes:WaitForChild("Gameplay")
+
+local noclipConnection
+noclipConnection = RunService.Stepped:Connect(function()
+    if not enabled then 
+        if noclipConnection then noclipConnection:Disconnect() end
+        return 
+    end
+    if gameActive and localPlayer:GetAttribute("Alive") == true then
+        local character = localPlayer.Character
+        if character then
+            for _, part in pairs(character:GetChildren()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end
+end)
+
+local function getActiveThreatPositions()
+    local threatPositions = {}
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local isThreat = false
+            
+            if localRole == "Murderer" then
+                if player.Character:FindFirstChild("Gun") or player.Backpack:FindFirstChild("Gun") then
+                    isThreat = true
+                end
+            else
+                if player.Character:FindFirstChild("Knife") or player.Backpack:FindFirstChild("Knife") then
+                    isThreat = true
+                end
+            end
+            
+            if isThreat then
+                table.insert(threatPositions, player.Character.HumanoidRootPart.Position)
+            end
+        end
+    end
+    return threatPositions
+end
+
+local function getClosestCoin(hrp, threatPositions)
+    local coins = CollectionService:GetTagged("CoinVisual")
+    local closestCoin = nil
+    local shortestDistance = math.huge
+    
+    for _, coin in pairs(coins) do
+        if coin and coin:IsA("BasePart") and coin.Parent and not coin:GetAttribute("Collected") and not coin:GetAttribute("Delete") then
+            local isSafe = true
+            for _, threatPos in pairs(threatPositions) do
+                if (threatPos - coin.Position).Magnitude < safeRadius then
+                    isSafe = false
+                    break
+                end
+            end
+            
+            if isSafe then
+                local distance = (hrp.Position - coin.Position).Magnitude
+                if distance < shortestDistance then
+                    shortestDistance = distance
+                    closestCoin = coin
+                end
+            end
+        end
+    end
+    
+    if not closestCoin then
+        shortestDistance = math.huge
+        for _, coin in pairs(coins) do
+            if coin and coin:IsA("BasePart") and coin.Parent and not coin:GetAttribute("Collected") and not coin:GetAttribute("Delete") then
+                local distance = (hrp.Position - coin.Position).Magnitude
+                if distance < shortestDistance then
+                    shortestDistance = distance
+                    closestCoin = coin
+                end
+            end
+        end
+    end
+    
+    return closestCoin
+end
+
+local function teleportToCoin(coin, hrp)
+    local coinPosition = coin.CFrame.Position + Vector3.new(0, -4, 0)
+    local distanceInitial = (coinPosition - hrp.Position).Magnitude
+    local tweenTime = distanceInitial / tweenSpeed
+    local tweenInfo = TweenInfo.new(tweenTime, Enum.EasingStyle.Linear)
+    local tween = TweenService:Create(hrp, tweenInfo, {CFrame = CFrame.new(coinPosition)})
+    tween:Play()
+    
+    while enabled and gameActive and coin.Parent and not coin:GetAttribute("Collected") and not coin:GetAttribute("Delete") and localPlayer:GetAttribute("Alive") == true do
+        local dt = RunService.Heartbeat:Wait()
+        
+        if not hrp or not hrp.Parent then 
+            tween:Cancel()
+            break 
+        end
+        
+        local currentPos = hrp.Position
+        local distance = (coinPosition - currentPos).Magnitude
+        
+        if distance <= 6 and firetouchinterest then
+            local targetPart = nil
+            
+            if coin.Parent then
+                local serverPart = coin.Parent:FindFirstChild("Coin_Server")
+                if serverPart and serverPart:FindFirstChildOfClass("TouchTransmitter") then
+                    targetPart = serverPart
+                else
+                    for _, desc in pairs(workspace:GetDescendants()) do
+                        if desc.Name == "Coin_Server" and desc:IsA("BasePart") and desc:FindFirstChildOfClass("TouchTransmitter") then
+                            if (desc.Position - coin.Position).Magnitude < 3 then
+                                targetPart = desc
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+            
+            if targetPart then
+                firetouchinterest(hrp, targetPart, 0)
+                firetouchinterest(hrp, targetPart, 1)
+            else
+                firetouchinterest(hrp, coin, 0)
+                firetouchinterest(hrp, coin, 1)
+            end
+        end
+        
+        if distance <= 1.5 then 
+            tween:Cancel()
+            hrp.CFrame = CFrame.new(coinPosition)
+            break
+        end
+    end
+    tween:Cancel()
+end
+
+local function isBagFull()
+    local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then return false end
+    
+    for _, desc in pairs(playerGui:GetDescendants()) do
+        if (desc.Name == "FullBagIcon" or desc.Name == "Full") and desc:IsA("GuiObject") then
+            if desc.Visible and desc.Parent and desc.Parent.Visible then
+                return true
+            end
+        end
+    end
+    
+    return false
+end
+
+local function checkInitialRoundState()
+    task.wait(0.5)
+    if localPlayer:GetAttribute("Alive") == true then
+        gameActive = true
+        if localPlayer.Character and (localPlayer.Character:FindFirstChild("Knife") or localPlayer.Backpack:FindFirstChild("Knife")) then
+            localRole = "Murderer"
+        elseif localPlayer.Character and (localPlayer.Character:FindFirstChild("Gun") or localPlayer.Backpack:FindFirstChild("Gun")) then
+            localRole = "Sheriff"
+        else
+            localRole = "Innocent"
+        end
+    end
+end
+checkInitialRoundState()
+
+gameplayGameplay:WaitForChild("RoleSelect").OnClientEvent:Connect(function(role)
+    localRole = role
+    gameActive = true
+    local character = localPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        hrp.Anchored = false
+    end
+end)
+
+gameplayGameplay:WaitForChild("VictoryScreen").OnClientEvent:Connect(function()
+    gameActive = false
+    local character = localPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        local bv = hrp:FindFirstChild("FarmBV")
+        if bv then bv:Destroy() end
+        local safePosition = hrp.Position - Vector3.new(0, 45, 0)
+        local tweenTime = 45 / tweenSpeed
+        local tweenInfo = TweenInfo.new(tweenTime, Enum.EasingStyle.Linear)
+        local tween = TweenService:Create(hrp, tweenInfo, {CFrame = CFrame.new(safePosition)})
+        tween:Play()
+        tween.Completed:Connect(function()
+            if hrp and not gameActive then
+                hrp.Anchored = true
+            end
+        end)
+    end
+end)
+
+gameplayGameplay:WaitForChild("Fade").OnClientEvent:Connect(function()
+    task.wait(0.5)
+    if localPlayer:GetAttribute("Alive") ~= true then
+        gameActive = false
+    end
+    local character = localPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        hrp.Anchored = false
+    end
+end)
+
+task.spawn(function()
+    while enabled do
+        task.wait()
+        
+        local character = localPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+        
+        if not gameActive or not character or not humanoid or not hrp or humanoid.Health <= 0 or localPlayer:GetAttribute("Alive") ~= true then
+            if hrp then
+                local bv = hrp:FindFirstChild("FarmBV")
+                if bv then bv:Destroy() end
+            end
+            task.wait(0.5)
+            continue
+        end
+        
+        if isBagFull() then
+            local bv = hrp:FindFirstChild("FarmBV")
+            if bv then bv:Destroy() end
+            
+            humanoid.Health = 0
+            localPlayer.CharacterAdded:Wait() 
+            task.wait(2) 
+            continue
+        end
+        
+        local activeThreats = getActiveThreatPositions()
+        local targetCoin = getClosestCoin(hrp, activeThreats)
+        
+        if targetCoin and not isBagFull() then
+            local bodyVelocity = hrp:FindFirstChild("FarmBV")
+            if not bodyVelocity then
+                bodyVelocity = Instance.new("BodyVelocity")
+                bodyVelocity.Name = "FarmBV"
+                bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+                bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                bodyVelocity.Parent = hrp
+            end
+            
+            teleportToCoin(targetCoin, hrp)
+        else
+            local bv = hrp:FindFirstChild("FarmBV")
+            if bv then bv:Destroy() end
+        end
+    end
+end)
+
+print("Auto Farm Is Loaded 100%")
