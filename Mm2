@@ -1,5 +1,5 @@
 local enabled = true
-local tweenSpeed = 24
+local tweenSpeed = 23
 
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
